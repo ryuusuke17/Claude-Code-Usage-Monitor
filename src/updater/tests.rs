@@ -285,6 +285,7 @@ fn portable_checks_only_github_and_returns_its_verified_release() {
         latest_version: "99.0.0".into(),
         asset_url: "https://example.invalid/update.exe".into(),
         integrity: AssetIntegrity::new(3, Some(ABC_DIGEST)).unwrap(),
+        architecture: Architecture::X64,
     };
     let result = check_channel_updates(
         InstallChannel::Portable,

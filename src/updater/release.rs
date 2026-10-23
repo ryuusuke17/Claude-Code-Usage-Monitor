@@ -1,16 +1,16 @@
 use semver::Version;
 use serde::Deserialize;
 
+use super::architecture::Architecture;
 use super::download::AssetIntegrity;
 use super::github_repo;
-
-pub(super) const RELEASE_ASSET_NAME: &str = "claude-code-usage-monitor.exe";
 
 #[derive(Clone, Debug)]
 pub struct ReleaseDescriptor {
     pub latest_version: String,
     pub(super) asset_url: String,
     pub(super) integrity: AssetIntegrity,
+    pub(super) architecture: Architecture,
 }
 
 #[derive(Deserialize)]
@@ -32,6 +32,7 @@ struct GitHubAsset {
 pub(super) fn release_descriptor(
     release: GitHubRelease,
     current: &str,
+    architecture: Architecture,
 ) -> Result<Option<ReleaseDescriptor>, String> {
     let latest = parse_version(&release.tag_name)?;
     let current = parse_version(current)?;
@@ -46,20 +47,25 @@ pub(super) fn release_descriptor(
     let mut matches = release
         .assets
         .iter()
-        .filter(|asset| asset.name == RELEASE_ASSET_NAME);
-    let asset = matches
-        .next()
-        .ok_or_else(|| format!("The latest release is missing {RELEASE_ASSET_NAME}."))?;
+        .filter(|asset| asset.name == architecture.asset_name());
+    let asset = matches.next().ok_or_else(|| {
+        format!(
+            "The latest release is missing {}.",
+            architecture.asset_name()
+        )
+    })?;
     if matches.next().is_some() {
         return Err(format!(
-            "The latest release has duplicate {RELEASE_ASSET_NAME} assets."
+            "The latest release has duplicate {} assets.",
+            architecture.asset_name()
         ));
     }
 
     let (owner, repo) = github_repo()?;
     let expected_url = format!(
-        "https://github.com/{owner}/{repo}/releases/download/{}/{RELEASE_ASSET_NAME}",
-        release.tag_name
+        "https://github.com/{owner}/{repo}/releases/download/{}/{}",
+        release.tag_name,
+        architecture.asset_name()
     );
     if asset.browser_download_url != expected_url {
         return Err("The update asset URL does not match the expected GitHub release.".into());
@@ -70,6 +76,7 @@ pub(super) fn release_descriptor(
         latest_version: latest.to_string(),
         asset_url: expected_url,
         integrity,
+        architecture,
     }))
 }
 

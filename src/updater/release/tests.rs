@@ -1,34 +1,69 @@
 use super::*;
+use crate::updater::architecture::Architecture;
 use serde_json::{json, Value};
 
-fn fixture(tag: &str) -> Value {
+const DIGEST: &str = "sha256:ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad";
+
+fn asset(tag: &str, name: &str) -> Value {
     let (owner, repo) = github_repo().unwrap();
+    json!({
+        "name": name,
+        "browser_download_url": format!("https://github.com/{owner}/{repo}/releases/download/{tag}/{name}"),
+        "size": 3,
+        "digest": DIGEST
+    })
+}
+
+fn fixture(tag: &str) -> Value {
     json!({
         "tag_name": tag,
         "draft": false,
         "prerelease": false,
-        "assets": [{
-            "name": RELEASE_ASSET_NAME,
-            "browser_download_url": format!("https://github.com/{owner}/{repo}/releases/download/{tag}/{RELEASE_ASSET_NAME}"),
-            "size": 3,
-            "digest": "sha256:ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
-        }]
+        "assets": [
+            asset(tag, Architecture::X64.asset_name()),
+            asset(tag, Architecture::Arm64.asset_name())
+        ]
     })
 }
 
 fn descriptor(value: Value, current: &str) -> Result<Option<ReleaseDescriptor>, String> {
-    release_descriptor(serde_json::from_value(value).unwrap(), current)
+    descriptor_for(value, current, Architecture::X64)
+}
+
+fn descriptor_for(
+    value: Value,
+    current: &str,
+    architecture: Architecture,
+) -> Result<Option<ReleaseDescriptor>, String> {
+    release_descriptor(
+        serde_json::from_value(value).unwrap(),
+        current,
+        architecture,
+    )
 }
 
 #[test]
 fn selects_exact_asset_even_after_an_unrelated_executable() {
     let mut value = fixture("v2.14.0");
-    let mut unrelated = value["assets"][0].clone();
+    let mut unrelated = asset("v2.14.0", "unrelated.exe");
     unrelated["name"] = json!("unrelated.exe");
     value["assets"].as_array_mut().unwrap().insert(0, unrelated);
     let release = descriptor(value, "2.13.44").unwrap().unwrap();
     assert_eq!(release.latest_version, "2.14.0");
-    assert!(release.asset_url.ends_with(RELEASE_ASSET_NAME));
+    assert!(release.asset_url.ends_with(Architecture::X64.asset_name()));
+}
+
+#[test]
+fn selects_the_requested_architecture_from_mixed_asset_order() {
+    let mut value = fixture("v2.14.0");
+    value["assets"].as_array_mut().unwrap().reverse();
+    let release = descriptor_for(value, "2.13.44", Architecture::Arm64)
+        .unwrap()
+        .unwrap();
+    assert_eq!(release.architecture, Architecture::Arm64);
+    assert!(release
+        .asset_url
+        .ends_with(Architecture::Arm64.asset_name()));
 }
 
 #[test]
@@ -51,6 +86,22 @@ fn rejects_duplicate_exact_assets() {
     let asset = value["assets"][0].clone();
     value["assets"].as_array_mut().unwrap().push(asset);
     assert!(descriptor(value, "2.13.44")
+        .unwrap_err()
+        .contains("duplicate"));
+}
+
+#[test]
+fn rejects_missing_or_duplicate_arm64_assets() {
+    let mut missing = fixture("v2.14.0");
+    missing["assets"].as_array_mut().unwrap().pop();
+    assert!(descriptor_for(missing, "2.13.44", Architecture::Arm64)
+        .unwrap_err()
+        .contains(Architecture::Arm64.asset_name()));
+
+    let mut duplicate = fixture("v2.14.0");
+    let arm64 = duplicate["assets"][1].clone();
+    duplicate["assets"].as_array_mut().unwrap().push(arm64);
+    assert!(descriptor_for(duplicate, "2.13.44", Architecture::Arm64)
         .unwrap_err()
         .contains("duplicate"));
 }
@@ -95,6 +146,16 @@ fn rejects_unexpected_download_locations() {
         value["assets"][0]["browser_download_url"] = json!(url);
         assert!(descriptor(value, "2.13.44").unwrap_err().contains("URL"));
     }
+}
+
+#[test]
+fn rejects_an_unexpected_arm64_download_location() {
+    let mut value = fixture("v2.14.0");
+    value["assets"][1]["browser_download_url"] =
+        json!("https://example.com/claude-code-usage-monitor-arm64.exe");
+    assert!(descriptor_for(value, "2.13.44", Architecture::Arm64)
+        .unwrap_err()
+        .contains("URL"));
 }
 
 #[test]

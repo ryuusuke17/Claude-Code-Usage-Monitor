@@ -37,7 +37,11 @@ Install the latest release with WinGet:
 winget install CodeZeno.ClaudeCodeUsageMonitor
 ```
 
-Alternatively, download `claude-code-usage-monitor.exe` from [GitHub Releases](https://github.com/CodeZeno/Claude-Code-Usage-Monitor/releases).
+Alternatively, download the executable for your system from [GitHub Releases](https://github.com/CodeZeno/Claude-Code-Usage-Monitor/releases). The `claude-code-usage-monitor.exe` asset is for x64 Windows; Windows 11 ARM devices should use `claude-code-usage-monitor-arm64.exe` for native performance.
+
+WinGet continues to install the x64 package. Use the ARM64 release asset when you want a native ARM64 portable install.
+
+An existing x64 portable install on an ARM device first updates to the migration-aware x64 version. A later stable update then selects ARM64 automatically. To switch sooner, close the app, replace its executable with the ARM64 release asset, and keep the local executable's existing filename and location so shortcuts and startup settings continue to work.
 
 See [updater verification](docs/updater.md) for the portable updater's integrity checks and trust boundary.
 
@@ -130,12 +134,24 @@ Install [Rust via rustup](https://www.rust-lang.org/tools/install), then run:
 cargo build --release
 ```
 
-The repository pins Rust 1.95.0 in `rust-toolchain.toml`; rustup automatically
-selects this version. CI uses the same version. When upgrading Rust, update
-`rust-toolchain.toml`, `.github/workflows/release.yml`, and the `rust-version`
-in `Cargo.toml` together.
+On Windows 11 ARM, install the ARM64 MSVC C++ build tools and Windows SDK with Visual Studio Build Tools. Add the Rust target with `rustup target add aarch64-pc-windows-msvc`, then build explicitly with:
 
-The executable will be created at `target\release\claude-code-usage-monitor.exe`.
+```powershell
+cargo build --release --locked --target aarch64-pc-windows-msvc
+```
+
+Use `rustup target add x86_64-pc-windows-msvc` followed by `--target x86_64-pc-windows-msvc` to build the x64 release from an ARM64 development machine.
+
+See the [Windows 11 ARM validation checklist](docs/windows-arm64-testing.md) for the desktop, update, and emulated x64 migration checks.
+
+The repository pins Rust 1.95.0 in `rust-toolchain.toml`; rustup automatically
+selects this version. Add a cross target with `rustup target add aarch64-pc-windows-msvc`
+or `rustup target add x86_64-pc-windows-msvc` when needed. CI uses the same
+Rust version. When upgrading Rust, update
+`rust-toolchain.toml`, both Windows workflows, and the `rust-version` in
+`Cargo.toml` together.
+
+The executable will be created under `target/<triple>/release/` for an explicit target, or at `target\release\claude-code-usage-monitor.exe` when building for the host.
 
 Windows MSVC builds statically link the C runtime through `.cargo/config.toml`,
 including release builds in CI. The executable does not require a separate

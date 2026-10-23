@@ -1,5 +1,5 @@
 use std::fs::File;
-use std::io::{self, Read};
+use std::io::{self, Read, Seek, SeekFrom};
 use std::os::windows::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -33,9 +33,11 @@ const WINGET_SHOW_VERSIONS_ARGS: [&str; 9] = [
     "--disable-interactivity",
 ];
 
+mod architecture;
 mod download;
 mod release;
 
+use architecture::Architecture;
 use download::{download_release_asset, open_verified_source, AssetIntegrity};
 pub use release::ReleaseDescriptor;
 use release::{parse_version, release_descriptor, GitHubRelease};
@@ -207,6 +209,8 @@ pub fn begin_self_update(release: &ReleaseDescriptor) -> Result<(), String> {
     }
 
     download_release_asset(release, &partial_download_path, &download_path)?;
+    let mut verified_download = open_verified_source(&download_path, &release.integrity)?;
+    verify_pe_architecture(&mut verified_download, release.architecture)?;
     std::fs::copy(&current_exe, &helper_path)
         .map_err(|e| format!("Unable to prepare updater helper: {e}"))?;
 
@@ -228,6 +232,7 @@ pub fn begin_self_update(release: &ReleaseDescriptor) -> Result<(), String> {
         .spawn()
         .map_err(|e| format!("Unable to launch updater helper: {e}"))?;
 
+    drop(verified_download);
     Ok(())
 }
 
@@ -238,13 +243,49 @@ fn apply_update(
     integrity: &AssetIntegrity,
 ) -> Result<(), String> {
     // Keep this handle open through replacement so the checked bytes cannot change.
-    let verified_source = open_verified_source(&source, integrity)?;
+    let mut verified_source = open_verified_source(&source, integrity)?;
+    verify_pe_architecture(&mut verified_source, Architecture::for_update())?;
     let _ = wait_for_process_exit(pid, Duration::from_secs(30));
     replace_target_binary(&target, &source)?;
     relaunch_target(&target)?;
     drop(verified_source);
     let _ = std::fs::remove_file(&source);
 
+    Ok(())
+}
+
+fn verify_pe_architecture(
+    file: &mut (impl Read + Seek),
+    expected: Architecture,
+) -> Result<(), String> {
+    let mut dos_header = [0u8; 64];
+    file.seek(SeekFrom::Start(0))
+        .and_then(|_| file.read_exact(&mut dos_header))
+        .map_err(|error| format!("Unable to read the update executable header: {error}"))?;
+    if dos_header[..2] != *b"MZ" {
+        return Err("The update is not a valid Windows executable (missing MZ header).".into());
+    }
+
+    let pe_offset = u32::from_le_bytes(dos_header[0x3c..0x40].try_into().unwrap()) as u64;
+    if pe_offset > download::MAX_DOWNLOAD_BYTES.saturating_sub(6) {
+        return Err("The update executable has an invalid PE header offset.".into());
+    }
+    file.seek(SeekFrom::Start(pe_offset))
+        .map_err(|error| format!("Unable to seek to the update executable header: {error}"))?;
+    let mut pe_header = [0u8; 6];
+    file.read_exact(&mut pe_header)
+        .map_err(|error| format!("Unable to read the update executable header: {error}"))?;
+    if pe_header[..4] != *b"PE\0\0" {
+        return Err("The update is not a valid Windows executable (missing PE header).".into());
+    }
+
+    let machine = u16::from_le_bytes(pe_header[4..6].try_into().unwrap());
+    if machine != expected.machine() {
+        return Err(format!(
+            "The update executable has machine type 0x{machine:04x}; expected 0x{:04x}.",
+            expected.machine()
+        ));
+    }
     Ok(())
 }
 
@@ -266,7 +307,11 @@ fn fetch_latest_release() -> Result<Option<ReleaseDescriptor>, String> {
         .read_json()
         .map_err(|e| format!("Unable to parse GitHub release data: {e}"))?;
 
-    release_descriptor(release, env!("CARGO_PKG_VERSION"))
+    release_descriptor(
+        release,
+        env!("CARGO_PKG_VERSION"),
+        Architecture::for_update(),
+    )
 }
 
 fn build_agent() -> Result<ureq::Agent, String> {
@@ -611,3 +656,46 @@ fn wide_str(value: &str) -> Vec<u16> {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod pe_tests {
+    use super::*;
+    use std::io::Cursor;
+
+    fn executable(machine: u16) -> Vec<u8> {
+        let mut bytes = vec![0; 70];
+        bytes[..2].copy_from_slice(b"MZ");
+        bytes[0x3c..0x40].copy_from_slice(&64u32.to_le_bytes());
+        bytes[64..68].copy_from_slice(b"PE\0\0");
+        bytes[68..70].copy_from_slice(&machine.to_le_bytes());
+        bytes
+    }
+
+    #[test]
+    fn accepts_executable_matching_selected_architecture() {
+        for architecture in [Architecture::X64, Architecture::Arm64] {
+            let mut file = Cursor::new(executable(architecture.machine()));
+            verify_pe_architecture(&mut file, architecture).unwrap();
+        }
+    }
+
+    #[test]
+    fn rejects_executable_for_a_different_architecture() {
+        let mut file = Cursor::new(executable(Architecture::X64.machine()));
+        assert!(verify_pe_architecture(&mut file, Architecture::Arm64)
+            .unwrap_err()
+            .contains("machine type"));
+    }
+
+    #[test]
+    fn rejects_invalid_or_truncated_pe_headers() {
+        for bytes in [vec![0; 64], b"not a PE executable".to_vec()] {
+            let mut file = Cursor::new(bytes);
+            assert!(verify_pe_architecture(&mut file, Architecture::X64).is_err());
+        }
+
+        let mut file = Cursor::new(executable(Architecture::X64.machine()));
+        file.get_mut()[0x3c..0x40].copy_from_slice(&u32::MAX.to_le_bytes());
+        assert!(verify_pe_architecture(&mut file, Architecture::X64).is_err());
+    }
+}

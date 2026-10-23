@@ -8,12 +8,27 @@ version, even when GitHub has a later release. An equal or older source version
 means the installation is up to date. Source failures remain errors and never
 trigger a fallback to the other channel. WinGet upgrades use that same source.
 
-The portable updater accepts only the exact `claude-code-usage-monitor.exe`
-asset from the configured repository's latest stable GitHub release. It rejects
-duplicate assets, unexpected download URLs, invalid semantic versions, drafts,
-and prereleases (including prerelease tags incorrectly marked as stable).
-Version precedence follows SemVer: `2.14.0-beta1` is below `2.14.0`, and build
-metadata does not affect ordering.
+The portable updater selects one exact asset from the configured repository's
+latest stable GitHub release. Native x64 systems use
+`claude-code-usage-monitor.exe`; native ARM64 systems use
+`claude-code-usage-monitor-arm64.exe`. On an ARM64 system, an existing x64
+install running under emulation selects the ARM64 asset after it has received
+the migration-aware x64 version. The first release containing the new updater
+acts as the x64 bridge; the next newer stable release performs the automatic
+architecture migration. To migrate immediately, download the ARM64 asset and
+replace the portable executable while keeping its local filename and path.
+
+Architecture detection uses `IsWow64Process2` when available. If the API is
+unavailable or fails, the updater records the failure in diagnostics and uses
+the running binary's architecture. The selected download's PE machine type is
+checked before the updater helper is launched and again by the helper before
+replacing the installed executable. Missing or mismatched architecture assets
+fail safely without falling back to another build.
+
+The updater rejects duplicate selected assets, unexpected download URLs,
+invalid semantic versions, drafts, and prereleases (including prerelease tags
+incorrectly marked as stable). Version precedence follows SemVer:
+`2.14.0-beta1` is below `2.14.0`, and build metadata does not affect ordering.
 
 Every update requires a valid `sha256:` digest and a nonzero size of at most
 100 MiB in the GitHub release asset metadata. The updater streams the download,
@@ -45,10 +60,12 @@ to perform installation through its own upgrade command.
 ## Tests
 
 Run `cargo test --locked updater` on Windows. Tests exercise metadata selection,
-SemVer precedence, streamed size limits, known SHA-256 vectors, corrupt and
-truncated bodies, interrupted and failed I/O, partial-file cleanup, helper
-arguments, and Windows file locking. Tests do not download or execute updates.
-The release workflow runs these tests before building a release.
+architecture-specific asset selection, PE machine validation, SemVer
+precedence, streamed size limits, known SHA-256 vectors, corrupt and truncated
+bodies, interrupted and failed I/O, partial-file cleanup, helper arguments,
+and Windows file locking. Tests do not download or execute updates. CI builds
+and tests the x64 and ARM64 targets; the release workflow verifies each PE
+machine type and publishes both assets only after both builds succeed.
 Channel tests also cover source isolation, WinGet version parsing, and source
 errors. To verify the live WinGet listing without installing an update, run
 `cargo test --locked winget_lists_published_versions_from_the_live_source -- --ignored`.

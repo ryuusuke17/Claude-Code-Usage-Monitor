@@ -20,29 +20,104 @@ jobs:
 
   build:
     needs: dependency-security
-    runs-on: windows-latest
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - architecture: x64
+            target: x86_64-pc-windows-msvc
+            runner: windows-latest
+            machine: "0x8664"
+            asset: claude-code-usage-monitor.exe
+          - architecture: arm64
+            target: aarch64-pc-windows-msvc
+            runner: windows-11-arm
+            machine: "0xaa64"
+            asset: claude-code-usage-monitor-arm64.exe
+    runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
+          persist-credentials: false
 
       # Keep in sync with rust-toolchain.toml.
       - uses: dtolnay/rust-toolchain@1.95.0
+        with:
+          target: ${{ matrix.target }}
 
       - name: Test updater safeguards
-        run: cargo test --locked updater
+        run: cargo test --locked --target ${{ matrix.target }} updater
 
       - name: Build release binary
-        run: cargo build --release --locked
+        run: cargo build --release --locked --target ${{ matrix.target }}
+
+      - name: Verify executable architecture and prepare release asset
+        shell: pwsh
+        run: |
+          $source = "target/${{ matrix.target }}/release/claude-code-usage-monitor.exe"
+          $stream = [IO.File]::OpenRead($source)
+          $reader = [IO.BinaryReader]::new($stream)
+          try {
+            if ($reader.ReadUInt16() -ne 0x5a4d) { throw "Missing DOS MZ signature: $source" }
+            $stream.Position = 0x3c
+            $peOffset = $reader.ReadUInt32()
+            if ($peOffset -gt ($stream.Length - 6)) { throw "Invalid PE header offset: $source" }
+            $stream.Position = $peOffset
+            if ($reader.ReadUInt32() -ne 0x00004550) { throw "Missing PE signature: $source" }
+            $machine = $reader.ReadUInt16()
+            if ($machine -ne ${{ matrix.machine }}) {
+              throw ("Unexpected PE machine 0x{0:x4}; expected ${{ matrix.machine }}." -f $machine)
+            }
+          } finally {
+            $reader.Dispose()
+            $stream.Dispose()
+          }
+          Copy-Item -LiteralPath $source -Destination "${{ matrix.asset }}"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ matrix.architecture }}
+          path: ${{ matrix.asset }}
+          if-no-files-found: error
+          retention-days: 1
+
+  publish:
+    needs: build
+    permissions:
+      contents: write
+    runs-on: windows-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: release-*
+          path: release-assets
+          merge-multiple: true
+
+      - name: Verify both release assets are present
+        shell: pwsh
+        run: |
+          $required = @("claude-code-usage-monitor.exe", "claude-code-usage-monitor-arm64.exe")
+          foreach ($name in $required) {
+            if (-not (Test-Path -LiteralPath "release-assets/$name" -PathType Leaf)) {
+              throw "Required release asset is missing: $name"
+            }
+          }
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v3
         with:
-          files: target/release/claude-code-usage-monitor.exe
+          files: |
+            release-assets/claude-code-usage-monitor.exe
+            release-assets/claude-code-usage-monitor-arm64.exe
           generate_release_notes: true
 
   winget:
-    needs: build
+    needs: publish
+    permissions:
+      contents: read
     runs-on: windows-latest
     env:
       WINGETCREATE_GITHUB_TOKEN: ${{ secrets.WINGETCREATE_GITHUB_TOKEN }}

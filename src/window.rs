@@ -138,6 +138,7 @@ struct AppState {
 
     custom_theme_enabled: bool,
     usage_countdown: bool,
+    use_windows_default_font: bool,
     active_theme_path: Option<PathBuf>,
     active_theme: Option<ThemeDocument>,
     theme_clock_interval: Option<Duration>,
@@ -793,6 +794,7 @@ fn theme_runtime_from_state(state: &AppState) -> ThemeRuntime {
         .with_poll_state(poll_ok, has_error)
         .with_language(state.language)
         .with_countdown(state.usage_countdown)
+        .with_windows_default_font(state.use_windows_default_font)
         .with_nest(nest)
         .with_floating_card_opacity(opacity)
         .with_antigravity_pools(
@@ -1204,12 +1206,20 @@ fn usage_summary_lines(
                 .session_label
                 .as_deref()
                 .unwrap_or(strings.session_window);
+            let label = match data.selected_account_name(provider) {
+                Some(name) => format!("{} ({name})", language.text(descriptor.display_name)),
+                None => language.text(descriptor.display_name).to_string(),
+            };
+            if provider == ProviderId::Claude && !usage.session.available {
+                lines.push(format!(
+                    "{label} {weekly_label}: {}",
+                    window_text(&usage.weekly)
+                ));
+                continue;
+            }
             lines.push(format!(
                 "{} {}: {} | {}: {}",
-                match data.selected_account_name(provider) {
-                    Some(name) => format!("{} ({name})", language.text(descriptor.display_name)),
-                    None => language.text(descriptor.display_name).to_string(),
-                },
+                label,
                 session_label,
                 if detailed_at.is_some() {
                     window_text(&usage.session)
@@ -2265,7 +2275,13 @@ unsafe extern "system" fn mirror_wnd_proc(
 ) -> LRESULT {
     match msg {
         WM_NCHITTEST => LRESULT(HTCLIENT as isize),
-        WM_SETCURSOR if set_surface_cursor(hwnd) => LRESULT(1),
+        // See the primary surface: DefWindowProc forwards both to the parent.
+        WM_MOUSEACTIVATE => LRESULT(MA_NOACTIVATE as isize),
+        WM_MOUSEWHEEL | WM_MOUSEHWHEEL | WM_APPCOMMAND | WM_CONTEXTMENU => LRESULT(0),
+        WM_SETCURSOR => {
+            set_surface_cursor(hwnd);
+            LRESULT(1)
+        }
         WM_MOUSEMOVE => {
             update_mouse_hover(hwnd, lparam);
             LRESULT(0)
@@ -2607,6 +2623,7 @@ pub fn run() {
                 window_state_timer_active: false,
                 custom_theme_enabled,
                 usage_countdown: settings.usage_countdown,
+                use_windows_default_font: settings.use_windows_default_font,
                 active_theme_path,
                 active_theme,
                 theme_clock_interval,
@@ -3426,6 +3443,7 @@ fn reload_external_settings(hwnd: HWND) {
         state.poll_interval_ms = settings.poll_interval_ms;
         state.providers = settings.enabled_providers();
         state.usage_countdown = settings.usage_countdown;
+        state.use_windows_default_font = settings.use_windows_default_font;
         dual_mode = state.show_antigravity_gemini
             && state.show_antigravity_external
             && state.providers.contains(ProviderId::Antigravity);
@@ -4000,6 +4018,32 @@ mod tray_usage_summary_tests {
             .provider_auth_error(ProviderId::Claude)
             .1;
         assert!(instruction.contains("desktop app") && instruction.contains("/login"));
+    }
+
+    #[test]
+    fn claude_summaries_omit_an_absent_five_hour_window() {
+        let mut reading = usage(0.0, 26.0, None);
+        reading.session = UsageSection::default();
+        let data = [(ProviderId::Claude, reading)].into_iter().collect();
+        let providers = ProviderSet::from_enabled([ProviderId::Claude]);
+        for (countdown, expected) in [(false, "26"), (true, "74")] {
+            assert_eq!(
+                tray_usage_summary_lines(&data, providers, LanguageId::English, countdown),
+                [format!("Claude Code 7d: {expected}%")]
+            );
+            assert_eq!(
+                usage_summary_lines(
+                    &data,
+                    providers,
+                    LanguageId::English,
+                    countdown,
+                    true,
+                    true,
+                    Some(UNIX_EPOCH),
+                ),
+                [format!("Claude Code 7d: {expected}.0%")]
+            );
+        }
     }
 
     #[test]

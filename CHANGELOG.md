@@ -4,6 +4,64 @@ Notable changes to Claude Code Usage Monitor are documented here, newest first.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), with
 changes grouped into Added, Changed, Fixed, and Removed where applicable.
 
+## [2.23.0] - 2026-11-03
+
+### Added
+
+- Add an enabled-by-default "Use Windows default font" toggle under Settings → Appearance. Turn it off to use the installed Segoe UI font for widget text and Theme Studio previews, bypassing Windows font substitutions that can cause clipping. Existing font rendering is preserved while enabled.
+
+### Fixed
+
+- Recognize the current widget surface window class in the Windows VM test harness, allowing visibility checks to detect the widget instead of only its hidden controller window.
+
+## [2.22.11] - 2026-11-03
+
+### Fixed
+
+- Hide Claude's five-hour meter and tooltip entry when the usage API reports no session quota, including Ultra accounts, while preserving weekly and Fable meters. Keep reset-time fallback probes from restoring an absent quota. ([#204](https://github.com/CodeZeno/Claude-Code-Usage-Monitor/issues/204))
+
+## [2.22.10] - 2026-11-02
+
+### Changed
+
+- Update the locked `lucide-icons` dependency from 1.60.0 to 1.61.0 for dashboard icons and the generated icon font subset. ([#203](https://github.com/CodeZeno/Claude-Code-Usage-Monitor/pull/203))
+
+## [2.22.9] - 2026-11-02
+
+### Changed
+
+- Update the locked `zip` dependency from 9.0.5 to 9.1.2 and its `typed-path` dependency to 0.13.0 for Theme Studio package import and export, retaining the existing Deflate feature configuration. ([#202](https://github.com/CodeZeno/Claude-Code-Usage-Monitor/pull/202))
+
+## [2.22.8] - 2026-10-30
+
+### Fixed
+
+- Handle widget activation, cursor, wheel, application-command, and context-menu messages without forwarding them synchronously to Explorer, preventing taskbar hangs during mouse interaction. Apply the handling to primary, mirror, and desktop surfaces while retaining mouse actions. ([#199](https://github.com/CodeZeno/Claude-Code-Usage-Monitor/pull/199))
+- Own widget tooltips through the monitor's controller instead of the taskbar-hosted surface, keeping their native owner chain inside the monitor. Cover primary and mirror message handling with an isolated native-parent regression test.
+
+## [2.22.7] - 2026-10-26
+
+### Fixed
+
+- Fall back to a fresh Claude desktop token when the default CLI token is expired and cannot be refreshed. Apply the same recovery to automatic polling and named default profiles while keeping custom paths, environment-selected directories, desktop sources, and WSL accounts pinned. ([#194](https://github.com/CodeZeno/Claude-Code-Usage-Monitor/pull/194))
+- Skip expired desktop installations when searching for a fresh fallback token. Add regression coverage for refresh precedence, missing or expired tokens, multiple desktop installations, and account isolation.
+
+## [2.22.6] - 2026-10-26
+
+### Changed
+
+- Update the locked `lucide-icons` dependency from 1.56.0 to 1.60.0 for dashboard icons and the generated icon font subset. ([#188](https://github.com/CodeZeno/Claude-Code-Usage-Monitor/pull/188))
+
+## [2.22.5] - 2026-10-26
+
+### Changed
+
+- Update the egui/eframe family and bundled font source to 0.37.0. ([#187](https://github.com/CodeZeno/Claude-Code-Usage-Monitor/pull/187))
+
+### Fixed
+
+- Refresh the vendored window integration and align the DirectX renderer with egui 0.37 so the software dashboard fallback uses compatible types. Adapt the update button and submenu state to the new egui APIs. Reapply text-only native clipboard support, including disabling the new image paste path, without enabling image clipboard codecs.
+
 ## [2.22.4] - 2026-10-25
 
 ### Fixed
@@ -1538,3 +1596,11 @@ changes grouped into Added, Changed, Fixed, and Removed where applicable.
 [2.22.2]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.22.1...v2.22.2
 [2.22.3]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.22.2...v2.22.3
 [2.22.4]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.22.3...v2.22.4
+[2.22.5]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.22.4...v2.22.5
+[2.22.6]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.22.5...v2.22.6
+[2.22.7]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.22.6...v2.22.7
+[2.22.8]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.22.7...v2.22.8
+[2.22.9]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.22.8...v2.22.9
+[2.22.10]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.22.9...v2.22.10
+[2.22.11]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.22.10...v2.22.11
+[2.23.0]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.22.11...v2.23.0

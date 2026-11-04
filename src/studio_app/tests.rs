@@ -1,4 +1,12 @@
 use super::*;
+
+#[test]
+fn font_setting_reaches_preview_runtime() {
+    let mut app = app_with_surfaces(vec![root("main")]);
+    assert!(app.theme_runtime().use_windows_default_font);
+    app.settings.use_windows_default_font = false;
+    assert!(!app.theme_runtime().use_windows_default_font);
+}
 use crate::ui::components::helper::{
     show_helper, Caret, HelperInsertion, HelperState, HelperStatus, HelperView, InsertMode,
 };
@@ -311,7 +319,7 @@ fn context_menu_preview_submenu_opens_on_hover() {
             },
         );
     });
-    let unrelated_popup_id = egui::Id::new("unrelated-dropdown-popup");
+    let unrelated_popup_id = egui::Id::unique("unrelated-dropdown-popup");
     egui::Popup::open_id(&context, unrelated_popup_id);
     collapse_context_menu_preview_on_outside_click(
         &context,

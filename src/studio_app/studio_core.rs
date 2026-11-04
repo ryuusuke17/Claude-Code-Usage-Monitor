@@ -29,6 +29,7 @@ impl StudioApp {
             .with_poll_state(self.usage_poll_ok, self.usage_has_error)
             .with_language(language)
             .with_countdown(self.settings.usage_countdown)
+            .with_windows_default_font(self.settings.use_windows_default_font)
             .with_antigravity_pools(
                 self.settings.antigravity_gemini_enabled(),
                 self.settings.antigravity_external_enabled(),
@@ -921,10 +922,10 @@ impl StudioApp {
         let response = ui
             .scope(|ui| {
                 ui.add_enabled_ui(!self.update_status.is_busy(), |ui| {
-                    let icon_id = ui.id().with("version-update-icon");
+                    let icon_id = egui::IdSalt::new("version-update-icon");
                     let version = format!("v{}", env!("CARGO_PKG_VERSION"));
                     let background = ui.painter().add(egui::Shape::Noop);
-                    let button = egui::AtomLayout::new((
+                    let button = egui::WidgetAtom::new((
                         egui::RichText::new(&version).size(16.0).color(muted()),
                         egui::Atom::custom(icon_id, egui::vec2(12.0, 12.0)),
                     ))
@@ -952,11 +953,7 @@ impl StudioApp {
                         );
                     }
                     button.response.widget_info(|| {
-                        egui::WidgetInfo::labeled(
-                            egui::WidgetType::Button,
-                            ui.is_enabled(),
-                            &version,
-                        )
+                        egui::WidgetInfo::labeled(egui::Role::Button, ui.is_enabled(), &version)
                     });
                     if let Some(rect) = button.rect(icon_id) {
                         crate::ui::components::icon::paint_centered_icon(

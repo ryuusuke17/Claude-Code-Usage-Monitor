@@ -868,6 +868,82 @@ fn classic_hover_summary_survives_theme_round_trips_and_is_opt_in() {
 }
 
 #[test]
+fn built_in_themes_hide_absent_claude_sessions_and_keep_weekly_and_fable_limits() {
+    use crate::models::{UsageData, UsageLimit, UsageSection};
+
+    for (_, source) in BUILTIN_THEME_SOURCES {
+        let theme: ThemeDocument = serde_json::from_str(source).unwrap();
+        for session_available in [false, true] {
+            let usage = AppUsageData::from_iter([(
+                ProviderId::Claude,
+                UsageData {
+                    session: UsageSection {
+                        available: session_available,
+                        // An idle session is still a real quota when reported.
+                        percentage: 0.0,
+                        resets_at: None,
+                    },
+                    weekly: UsageSection {
+                        available: true,
+                        percentage: 26.0,
+                        resets_at: None,
+                    },
+                    limits: vec![UsageLimit {
+                        key: "weekly_scoped_fable".into(),
+                        kind: "weekly_scoped".into(),
+                        label: "Fable".into(),
+                        model: Some("Fable".into()),
+                        is_active: true,
+                        usage: UsageSection {
+                            available: true,
+                            percentage: 43.0,
+                            resets_at: None,
+                        },
+                        ..Default::default()
+                    }],
+                    ..Default::default()
+                },
+            )]);
+            for countdown in [false, true] {
+                let runtime = ThemeRuntime::new(true, false, false).with_countdown(countdown);
+                let (width, height) = resolve_surface_size(&theme, 0, Some(&usage), runtime);
+                let canvas = Canvas {
+                    width,
+                    height,
+                    ..Default::default()
+                };
+                let mut context =
+                    DataContext::from_usage_with_runtime(Some(&usage), &canvas, runtime);
+                for dark in [false, true] {
+                    context.insert("system.dark", dark as u8 as f64);
+                    let mut session_layers = 0;
+                    let mut weekly_layers = 0;
+                    let mut fable_layers = 0;
+                    for object in &theme.surfaces[0].children {
+                        let visible = evaluate(&object.render.0, &context).unwrap() != 0.0;
+                        if object.id.starts_with("claude-session-") {
+                            if !session_available {
+                                assert!(!visible, "{}: {}", theme.id, object.id);
+                            }
+                            session_layers += visible as usize;
+                        } else if object.id.starts_with("claude-weekly-") {
+                            weekly_layers += visible as usize;
+                        } else if object.id.starts_with("fable-weekly-") {
+                            fable_layers += visible as usize;
+                        }
+                    }
+                    assert_eq!(session_layers, if session_available { 2 } else { 0 });
+                    assert_eq!(weekly_layers, 2);
+                    if theme.id != CLASSIC_VERTICAL_THEME_ID {
+                        assert_eq!(fable_layers, 2);
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[test]
 fn built_in_classic_adds_a_fable_column_when_the_limit_is_available() {
     use crate::models::{UsageData, UsageLimit, UsageSection};
 
@@ -1227,7 +1303,19 @@ fn opencode_monthly_window_is_available_to_templates_when_present() {
 #[test]
 fn starter_theme_renders_transparent_pixels_at_declared_size() {
     let theme = ThemeDocument::starter();
-    let rendered = render_theme(&theme, None);
+    let absent = render_theme(&theme, None);
+    assert!((30..139).all(|x| absent.pixels[10 * absent.width as usize + x] >> 24 == 0));
+    let usage = AppUsageData::from_iter([(
+        ProviderId::Claude,
+        crate::models::UsageData {
+            session: crate::models::UsageSection {
+                available: true,
+                ..Default::default()
+            },
+            ..Default::default()
+        },
+    )]);
+    let rendered = render_theme(&theme, Some(&usage));
     assert_eq!((rendered.width, rendered.height), (217, 46));
     assert_eq!(rendered.pixels.len(), 217 * 46);
     assert!(rendered.pixels.iter().any(|pixel| pixel >> 24 > 0));
@@ -1263,6 +1351,75 @@ fn empty_text_output_is_a_safe_noop() {
         },
     );
     assert_eq!(pixels, original);
+}
+
+#[test]
+fn font_override_bypasses_wider_theme_fonts_without_changing_default_rendering() {
+    for scale in [1.0_f64, 1.25, 1.5, 1.75, 2.0] {
+        let render = |family: &str, windows_default: bool, width: f64| {
+            let mut theme = ThemeDocument::starter();
+            let mut root = SceneObject::object("font-check", "Font check");
+            root.width = width.into();
+            root.height = 13.0.into();
+            root.content = SceneContent::Text {
+                template: "13% · 4.5h".into(),
+                font_family: family.into(),
+                font_size: 12.0.into(),
+                weight: FontWeight::Medium,
+                rendering: FontRendering::ClearType,
+                contrast: 1.0.into(),
+                align: TextAlign::Left,
+                color: Paint::new("#FFFFFFFF"),
+            };
+            theme.surfaces = vec![root];
+            let rendered = render_theme_surface_with_runtime_at_scale(
+                &theme,
+                0,
+                None,
+                ThemeRuntime::default().with_windows_default_font(windows_default),
+                scale,
+            );
+            assert!(rendered.warnings.is_empty());
+            rendered
+        };
+        let default = render("Verdana", true, 62.0);
+        // The enabled/default path still uses the font stored in the theme.
+        let mut expected = vec![0; default.pixels.len()];
+        render_text_mask(
+            &mut expected,
+            default.width,
+            default.height,
+            "13% · 4.5h",
+            "Verdana",
+            12.0 * scale,
+            500,
+            FontRendering::ClearType,
+            1.0,
+            TextAlign::Left,
+            Rgba {
+                r: 255,
+                g: 255,
+                b: 255,
+                a: 255,
+            },
+        );
+        assert_eq!(default.pixels, expected);
+        let forced = render("Verdana", false, 62.0);
+        assert_eq!(forced.pixels, render("Tahoma", false, 62.0).pixels);
+        assert!(forced.pixels.iter().any(|p| *p != 0));
+        let full = render("Verdana", false, 200.0);
+        for y in 0..forced.height as usize {
+            assert_eq!(
+                forced.pixels[y * forced.width as usize..(y + 1) * forced.width as usize],
+                full.pixels
+                    [y * full.width as usize..y * full.width as usize + forced.width as usize],
+                "forced Segoe UI must fit the existing box at scale {scale}",
+            );
+        }
+        if scale == 1.5 {
+            assert_ne!(default.pixels, forced.pixels);
+        }
+    }
 }
 
 #[test]
